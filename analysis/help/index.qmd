@@ -1,0 +1,310 @@
+---
+title: HELP loan analysis
+subtitle: Interrogating HELP debts in the ATO individual sample files
+format:
+  360-analysis-html:
+    # override for selected charts that do not expose individuals
+    output: false
+author: James Goldie
+date: last-modified
+code-fold: true
+---
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+dir.create(here("out", "explore"), showWarnings = FALSE, recursive = TRUE)
+```
+
+# Unzipping the data
+
+Data is delivered as a `.7z` file, `Sample files 2011-12 to 20??-20??.7z` (covering from 2011-12 onward).
+
+:::{.callout-note}
+The 1% sample files from 2003-04 to 2010-11 don't appear to have information on HELP debt, only an indicator showing _whether_ they have a debt.
+:::
+
+The file has individual, nested ZIP files for each financial year that have their own passwords.
+
+:::{.callout-warning}
+For now I'm going to manually unzip these password-protected ZIP files, so the following code will assume that the unprotected CSV files are available somewhere under `/data/raw` as `20??_sample_file.csv`.
+
+**These files are not version controlled; you must apply for access to them from the [Australian Taxation Office](https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/taxation-statistics/taxation-statistics-previous-editions/taxation-statistics-2017-18/statistics/individuals/individuals-sample-files).
+:::
+
+## Exploration
+
+```{r}
+#| label: load-data
+tibble(
+  path = list.files(
+    here("data", "raw"),
+    pattern = "20.._sample_file\\.(csv|txt)",
+    recursive = TRUE,
+    full.names = TRUE)) |>
+  mutate(
+    year_end = str_extract(basename(path), "20.."),
+    data = map(path, read_csv,
+      col_select = c(Taxable_Income, Help_debt))) ->
+nested_2pc
+```
+
+
+```{r}
+#| label: combine
+nested_2pc |>
+  pull(data) |>
+  set_names(nested_2pc$year_end) |>
+  bind_rows(.id = "year_end") |>
+  select(year_end, income = Taxable_Income, help_debt = Help_debt) ->
+unnested_2pc
+```
+
+Let's start exploring HELP debt and income with some histograms (well, frequency polygons):
+
+```{r}
+#| label: explore-histograms
+#| output: true
+ggplot(unnested_2pc) +
+  aes(x = help_debt) +
+  geom_freqpoly(aes(colour = year_end)) +
+  scale_x_continuous(
+    transform = "log10",
+    guide = guide_axis_logticks(),
+    labels = scales::label_currency()) +
+  scale_colour_brewer(type = "seq") +
+  theme_minimal(base_size = 18) +
+  theme(axis.ticks.length.x = rel(3))
+
+ggplot(unnested_2pc) +
+  aes(x = income) +
+  geom_freqpoly(aes(colour = year_end)) +
+  scale_x_continuous(
+    transform = "log10",
+    guide = guide_axis_logticks(),
+    labels = scales::label_currency()) +
+  scale_colour_brewer(type = "seq") +
+  theme_minimal(base_size = 18) +
+  theme(axis.ticks.length.x = rel(3))
+```
+
+How many people from each sample even have a debt?
+
+```{r}
+#| label: has-debt-percentage
+#| output: true
+unnested_2pc |>
+  group_by(year_end, help_debt > 0) |>
+  summarise(n = n()) |>
+  mutate(prop = n / sum(n, na.rm = TRUE)) |>
+  rename(has_help_debt = `help_debt > 0`) |>
+  filter(has_help_debt == TRUE)
+```
+
+And the mean income and balance each year (including those for whom it's zero)?
+
+```{r}
+#| label: mean-income-balance
+#| output: true
+unnested_2pc |>
+  group_by(year_end) |>
+  summarise(
+    mean_income = mean(income, na.rm = TRUE),
+    mean_help_bal = mean(help_debt, na.rm = TRUE)) |>
+  ungroup()
+```
+
+### Calculating indexation and mandatory repayment
+
+The Parliamentary Library [keeps a historical record](https://www.aph.gov.au/About_Parliament/Parliamentary_Departments/Parliamentary_Library/pubs/rp/rp2021/Chronologies/HigherEducation#_Toc67381554) of HELP loan repayment rates.
+
+:::{.callout-note}
+These tables are saved in `/data`. You may need to re-retrieve them if you're reproducing this analysis in later years.
+:::
+
+:::{.callout-warning}
+For this analysis, I'm simply using taxable income as the measure for repayment. In reality, a few other items are considered:
+
+- plus net rental losses (from 1996)
+- plus total reportable fringe benefits amounts (from 1999)
+- deduct exempt foreign employment income (from 2005)
+- plus any total investment loss (which includes net rental losses) (from 2009)
+- plus reportable super contributions (from 2009)
+:::
+
+Let's tidy up the repayment rate tables. Note that the top rate for each year is a _starting threshold_, so we'll change those to be infinite:
+
+```{r}
+#| label: get-repayment-rates
+here("data", "repayment-rates-2004-2019.csv") |>
+  read_csv() |>
+  pivot_longer(-Year, names_to = "rate", values_to = "threshold") |>
+  mutate(
+    year_end = paste0("20", str_sub(Year, 6, 7)),
+    rate = if_else(rate == "Nil", "0", rate),
+    rate = rate |>
+      parse_number(locale = locale(grouping_mark = " ")) |>
+      (\(x) x / 100)(),
+    threshold = parse_number(threshold,
+      locale = locale(grouping_mark = " "))) |>
+  select(year_end, rate, threshold) |>
+  filter(!is.na(threshold)) ->
+repayment_rates_old
+
+here("data", "repayment-rates-2019-2021.csv") |>
+  read_csv() |>
+  pivot_longer(-Rate, names_to = "Year", values_to = "threshold") |>
+  mutate(
+    year_end = paste0("20", str_sub(Year, 6, 7)),
+    rate = if_else(Rate == "Nil", "0", Rate),
+    rate = rate |>
+      parse_number(locale = locale(grouping_mark = " ")) |>
+      (\(x) x / 100)(),
+    threshold = parse_number(threshold,
+      locale = locale(grouping_mark = " "))) |>
+  select(year_end, rate, threshold) |>
+  filter(!is.na(threshold)) ->
+repayment_rates_new
+
+# combine the rates
+bind_rows(repayment_rates_old, repayment_rates_new) |>
+  rename(repay_rate = rate, repay_threshold = threshold) |>
+  group_by(year_end) |>
+  mutate(repay_threshold =
+    if_else(repay_rate == max(repay_rate, na.rm = TRUE), Inf, repay_threshold)) ->
+repayment_rates
+
+# add upper limits of inf
+```
+
+Now we can apply them to our individual sample to work out repayment obligations based on people's incomes.
+
+Since repayments are not progressive, we can use a rolling join to identify the relevant threshold and rate:
+
+```{r}
+#| label: calculate-repayments
+unnested_2pc |>
+  left_join(repayment_rates, join_by(
+    year_end == year_end,
+    closest(income <= repay_threshold))) |>
+  mutate(repay_amount = help_debt * repay_rate) ->
+unnested_repayments
+```
+
+Now let's handle indexation. This one is a fixed rate of taxable income each year. The ATO has [a table of historical indexation rates](https://www.ato.gov.au/tax-rates-and-codes/study-and-training-support-loans-indexation-rates) going back to 2013 (not ideal, but until 2011, the Higher Education Operations Grant index was used).
+
+
+```{r}
+#| label: indexation-rates
+tribble(
+  ~ year_end, ~ index_rate,
+  "2023",     "7.1%",
+  "2022",     "3.9%",
+  "2021",     "0.6%",
+  "2020",     "1.8%",
+  "2019",     "1.8%",
+  "2018",     "1.9%",
+  "2017",     "1.5%",
+  "2016",     "1.5%",
+  "2015",     "2.1%",
+  "2014",     "2.6%",
+  "2013",     "2.0%") |>
+  mutate(
+    index_rate = index_rate |>
+      parse_number(locale = locale(grouping_mark = " ")) |>
+      (\(x) x / 100)()) ->
+indexation_rates
+```
+
+Let's do another rolling join to the tax returns. Then, once we have both repayment amount and indexation amount, we'll work out net change and divide it by the balance to work out number of years to repay (obviously this assumes no future change to thresholds or income):
+
+```{r}
+#| label: calculate-indexation
+unnested_repayments |>
+  left_join(indexation_rates, join_by(year_end == year_end)) |>
+  mutate(index_amount = help_debt * index_rate) |>
+  filter(!is.na(index_rate)) |>
+  # calc net change and repayment time
+  mutate(
+    net_reduction = repay_amount - index_amount,
+    payback_yrs = help_debt / net_reduction) ->
+unnested_payback
+```
+
+Let's try some visualisations to see this payback distribution. We'll need to remove the people with no debt:
+
+```{r}
+#| label: vis-payback
+#| output: true
+unnested_payback |>
+  filter(is.finite(payback_yrs), help_debt > 0) |>
+  mutate(
+    repaying = payback_yrs > 0,
+    payback_yrs_abs = abs(payback_yrs)) ->
+finite_paybacks
+
+ggplot(finite_paybacks) +
+  aes(x = payback_yrs, colour = year_end) +
+  geom_freqpoly(
+    bins = 100,
+    position = "identity") +
+  scale_x_continuous(limits = c(-100, 100)) +
+  scale_colour_brewer(type = "seq") +
+  theme_minimal() ->
+payback_distribution_plot
+
+ggsave(
+  here("out", "explore", "payback-distro.png"),
+  payback_distribution_plot,
+  width = 1920, height = 1080, units = "px", bg = "white")
+```
+
+Lots of stuff to digest here. I'm curious why the behaviour of those with growing debts is very different in 2021 to in other years.
+
+Let's look at this two dimensionally instead:
+
+```{r}
+#| label: heatmaps-plain
+ggplot(finite_paybacks) +
+  aes(x = income, y = help_debt) +
+  geom_bin_2d() +
+  facet_wrap(vars(year_end)) +
+  scale_x_continuous(trans = "log10", labels = scales::label_currency(),
+    limits = c(100, 1000000)) +
+  scale_y_continuous(trans = "log10", labels = scales::label_currency(),
+    limits = c(100, 200000)) +
+  scale_fill_continuous(trans = "log10")
+```
+
+Hard to see too much change over time in this view, to be honest; the heatmap is not as useful as I'd imagined. Although it might be if we overlay payback periods on it, since indexation is an important component!
+
+```{r}
+#| label: heatmaps-payback
+
+# warning: this plot shouldn't be rendered! it shows individual plots
+ggplot(finite_paybacks) +
+  aes(x = income, y = help_debt) +
+  geom_point(aes(colour = net_reduction), alpha = 0.1, size = 0.5) +
+  facet_wrap(vars(year_end)) +
+  scale_x_continuous(trans = "log10", labels = scales::label_currency(),
+    limits = c(10000, 1000000)) +
+  scale_y_continuous(trans = "log10", labels = scales::label_currency(),
+    limits = c(500, 500000)) +
+  scale_colour_gradient2(
+    # limits = c(-100, 100),
+    limits = c(-5000, 5000)
+    # oob = scales::squish
+    ) +
+  theme_grey(base_size = 8) +
+  labs(
+    x = "Taxable income",
+    y = "HELP debt balance",
+    colour = "Net reduction in debt",
+    title = "Distribution of HELP balances") ->
+heatmap_paybacks
+
+ggsave(
+  here("out", "explore", "heatmap-points.png"),
+  heatmap_paybacks,
+  width = 1920, height = 1080, units = "px", bg = "white")

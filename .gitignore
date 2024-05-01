@@ -18,3 +18,9 @@ Thumbs.db
 # output folder (you may want to exclude files when we publish!)
 /out/*
 !/out
+
+# no raw data (this cannot be shared!)
+/data/raw
+
+# no exploratory plots that may expose individuals
+/out/explore
