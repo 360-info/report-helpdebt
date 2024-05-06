@@ -13,6 +13,7 @@ code-fold: true
 ```{r}
 #| label: setup
 library(tidyverse)
+library(RColorBrewer)
 library(here)
 dir.create(here("out", "explore"), showWarnings = FALSE, recursive = TRUE)
 ```
@@ -141,7 +142,13 @@ unnested_2pc |>
 
 ### Estimating 2022, 2023 and 2024 using FY2001 taxpayers
 
-Because we don't have sample files beyond 2021, I'm going to use that latest sample file for 2022, 2023 and 2024 to see the effect of indexation rate.
+Because we don't have sample files beyond 2021, I'm going to use that latest sample file for 2022, 2023 and 2024 to see the effect of indexation rate (marking those years with `*`).
+
+:::{.callout-important}
+The Australian Government has announced that HELP debts will now be indexed according to the lowest of the Wage Price index and the Consumer Price Index. This change will retroactively be applied from FY2023.
+
+I'll investigate the effect of this policy with the years marked `+` (still using the FY2021 returns).
+:::
 
 ```{r}
 #| label: estimate-2022-2024
@@ -153,7 +160,9 @@ unnested_2pc |>
   bind_rows(
     unnested_2pc |> replace_year("2022*"),
     unnested_2pc |> replace_year("2023*"),
-    unnested_2pc |> replace_year("2024*")) ->
+    unnested_2pc |> replace_year("2024*"),
+    unnested_2pc |> replace_year("2023+"),
+    unnested_2pc |> replace_year("2024+")) ->
 unnested_estimated  
 ```
 
@@ -210,19 +219,21 @@ here("data", "repayment-rates-2019-2021.csv") |>
 repayment_rates_older
 
 # FY2022-2024
-tidy_ratetables <- function(path) {
-  year <- paste0(str_extract(basename(path), "20.."), "*")
+tidy_ratetables <- function(path, suffix = c("*", "+")) {
+  suffix <- match.arg(suffix)
+  year <- paste0(str_extract(basename(path), "20.."), suffix)
   
   # read, turn thresholds into upper limits
+  # (note differing kinds of hyphens in each table!)
   read_csv(path, col_types = "cc") |>
     mutate(
       year_end = year,
       threshold = `Repayment income (RI)` |>
-        str_remove_all("\\$[\\d,]{1,9} – ") |>
+        str_remove_all("\\$[\\d,]{1,9} \\p{Pd} ") |>
         str_replace_all(c(
           "Below " = "",
           " and above" = "")) |>
-        parse_number(locale = locale(grouping_mark = " ")),
+        parse_number(),
       # rate: nil => 0, drop %, / 100
       rate = if_else(`Repayment rate` == "Nil", "0", `Repayment rate`),
       rate = rate |>
@@ -234,17 +245,28 @@ tidy_ratetables <- function(path) {
 tibble(
   path = list.files(here("data"),
     pattern = glob2rx("repayment-rates-FY20??.csv"),
-    full.names = TRUE)) |>
+    full.names = TRUE)) ->
+rate_table_files_newest
+
+rate_table_files_newest |>
   mutate(data = map(path, tidy_ratetables)) |>
   unnest(data) |>
   select(-path) ->
 repayment_rates_new
+
+rate_table_files_newest |>
+  filter(str_detect(path, regex("(23|24)"))) |>
+  mutate(data = map(path, tidy_ratetables, suffix = "+")) |>
+  unnest(data) |>
+  select(-path) ->
+repayment_rates_new_alppolicy
   
 
 # combine the rates (set upper rates to inf)
 repayment_rates_oldest |>
   bind_rows(repayment_rates_older) |>
   bind_rows(repayment_rates_new) |>
+  bind_rows(repayment_rates_new_alppolicy) |>
   rename(repay_rate = rate, repay_threshold = threshold) |>
   group_by(year_end) |>
   mutate(repay_threshold =
@@ -268,27 +290,32 @@ unnested_repayments
 
 Now let's handle indexation. This one is a fixed rate of taxable income each year. The ATO has [a table of historical indexation rates](https://www.ato.gov.au/tax-rates-and-codes/study-and-training-support-loans-indexation-rates) going back to 2013 (not ideal, but until 2011, the Higher Education Operations Grant index was used).
 
+:::{.callout-note}
+Reporting of the Australian Government's announcement that HELP loans will retroactively follow the lower of CPI and WPI from FY2023 notes that last year's 7.1% indexation will be reduced to 3.2%.
+
+This year's was expected to be 4.7% on the basis of the CPI, but the latest WPI isn't out yet (latest release is December, and the March quarter is released on May 15).
+
+As of the December release, annual WPI had risen to 4.2%. I'm going to use that figure for now, but it looks like WPI has been trending up since the pandemic — it could be that that figure lands close to 4.7% and hardly moves at all.
+:::
 
 ```{r}
 #| label: indexation-rates
 tribble(
   ~ year_end, ~ index_rate,
-  "2024*",    "4.7%",
-  "2023*",    "7.1%",
-  "2022*",    "3.9%",
-  "2021",     "0.6%",
-  "2020",     "1.8%",
-  "2019",     "1.8%",
-  "2018",     "1.9%",
-  "2017",     "1.5%",
-  "2016",     "1.5%",
-  "2015",     "2.1%",
-  "2014",     "2.6%",
-  "2013",     "2.0%") |>
-  mutate(
-    index_rate = index_rate |>
-      parse_number(locale = locale(grouping_mark = " ")) |>
-      (\(x) x / 100)()) ->
+  "2024+",    0.042,
+  "2023+",    0.032,
+  "2024*",    0.047,
+  "2023*",    0.071,
+  "2022*",    0.039,
+  "2021",     0.006,
+  "2020",     0.018,
+  "2019",     0.018,
+  "2018",     0.019,
+  "2017",     0.015,
+  "2016",     0.015,
+  "2015",     0.021,
+  "2014",     0.026,
+  "2013",     0.020) ->
 indexation_rates
 ```
 
@@ -307,7 +334,9 @@ unnested_repayments |>
 unnested_payback
 ```
 
-Let's try some visualisations to see this payback distribution. We'll need to remove the people with no debt:
+### Visualise debt changes and payback periods
+
+Let's try some visualisations to see this payback distribution. (We'll need to remove the people with no debt.) I'd particularly like to check assumptions of normality here:
 
 ```{r}
 #| label: vis-payback
@@ -324,7 +353,8 @@ pal_PuRd <- brewer.pal(7, "PuRd") |> colorRampPalette()
 year_count_ext <- finite_paybacks |> pull(year_end) |> unique() |> length() 
 payback_pal <- pal_PuRd(year_count_ext)
 
-ggplot(finite_paybacks |> filter(year_end %in% c("2023*", "2024*"))) +
+# payback period
+ggplot(finite_paybacks |> filter(!str_ends(year_end, "[*+]"))) +
   aes(x = payback_yrs, colour = year_end) +
   geom_vline(xintercept = 0, colour = "#666666", linetype = "dotted") +
   geom_freqpoly(
@@ -336,7 +366,26 @@ ggplot(finite_paybacks |> filter(year_end %in% c("2023*", "2024*"))) +
   scale_colour_manual(values = payback_pal) +
   theme_minimal(base_size = 12) +
   labs(
-    x = "Payback time (years)\n(Positive: reducing debt)",
+    x = "Payback period (years)\n(Positive: reducing debt)",
+    y = "Number of people",
+    colour = "Financial\nyear end",
+    title = "Distribution of payback periods for HELP debt"
+  )
+
+# net reduction in debt
+ggplot(finite_paybacks |> filter(!str_ends(year_end, "[*+]"))) +
+  aes(x = net_reduction, colour = year_end) +
+  geom_vline(xintercept = 0, colour = "#666666", linetype = "dotted") +
+  geom_freqpoly(
+    # bins = 100,
+    position = "identity") +
+  scale_x_continuous(
+    limits = c(-2000, 2000)
+    ) +
+  scale_colour_manual(values = payback_pal) +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "Net reduction in debt ($)\n(Positive: reducing debt)",
     y = "Number of people",
     colour = "Financial\nyear end",
     title = "Distribution of payback periods for HELP debt"
@@ -345,13 +394,15 @@ ggplot(finite_paybacks |> filter(year_end %in% c("2023*", "2024*"))) +
 
 I'm seeing some odd patterns in payback time for the latter years, so I'm going to run off some jittered points of reduction and payback period over time in the exploratory folder:
 
+**EDIT:** yep, bad code reading in the more recent rates tables (due to different grouping separators) had repayment thresholds 1000x lower than they should have been. These are good diagnostic plots!
+
 ```{r}
 #| label: jitter-changes
 # warning - do not commit to version control (requires `output: true`)
 ggplot(finite_paybacks) +
   aes(x = net_reduction, y = year_end) +
-  geom_violin() +
   geom_point(position = "jitter", size = 0.25, alpha = 0.025) +
+  geom_violin(colour = "gold", alpha = 0.25) +
   geom_vline(xintercept = 0, colour = "red", linetype = "dotted") +
   labs(
     x = "Net reduction in debt",
@@ -359,9 +410,46 @@ ggplot(finite_paybacks) +
 netreduction_jitter
 
 ggplot(finite_paybacks) +
-  aes(x = payback_yrs, y = year_end) +
-  geom_violin() +
+  aes(x = income, y = year_end) +
   geom_point(position = "jitter", size = 0.25, alpha = 0.025) +
+  geom_violin(colour = "gold", alpha = 0.25) +
+  # geom_vline(xintercept = 0, colour = "red", linetype = "dotted") +
+  labs(
+    x = "Income",
+    y = "Year") ->
+income_jitter
+
+ggplot(finite_paybacks) +
+  aes(x = help_debt, y = year_end) +
+  geom_point(position = "jitter", size = 0.25, alpha = 0.025) +
+  geom_violin(colour = "gold", alpha = 0.25) +
+  labs(
+    x = "Income",
+    y = "Year") ->
+helpdebt_jitter
+
+ggplot(finite_paybacks) +
+  aes(x = repay_amount, y = year_end) +
+  geom_point(position = "jitter", size = 0.25, alpha = 0.025) +
+  geom_violin(colour = "gold", alpha = 0.25) +
+  labs(
+    x = "Repayment",
+    y = "Year") ->
+repayment_jitter
+
+ggplot(finite_paybacks) +
+  aes(x = index_amount, y = year_end) +
+  geom_point(position = "jitter", size = 0.25, alpha = 0.025) +
+  geom_violin(colour = "gold", alpha = 0.25) +
+  labs(
+    x = "Indexation",
+    y = "Year") ->
+indexation_jitter
+
+ggplot(finite_paybacks) +
+  aes(x = payback_yrs, y = year_end) +
+  geom_point(position = "jitter", size = 0.25, alpha = 0.025) +
+  geom_violin(colour = "gold", alpha = 0.25) +
   geom_vline(xintercept = 0, colour = "red", linetype = "dotted") +
   scale_x_continuous(transform = scales::pseudo_log_trans(base = 10)) +
   labs(
@@ -370,18 +458,37 @@ ggplot(finite_paybacks) +
 payback_jitter
 
 ggsave(
-  here("out", "explore", "netreduction_jitter.png"),
+  here("out", "explore", "jitter-netreduction.png"),
   netreduction_jitter,
   width = 1920, height = 1080, units = "px", bg = "white")
 
 ggsave(
-  here("out", "explore", "payback_jitter.png"),
-  payback_jitter,
+  here("out", "explore", "jitter-income.png"),
+  income_jitter,
   width = 1920, height = 1080, units = "px", bg = "white")
 
+ggsave(
+  here("out", "explore", "jitter-helpdebt.png"),
+  helpdebt_jitter,
+  width = 1920, height = 1080, units = "px", bg = "white")
+
+ggsave(
+  here("out", "explore", "jitter-repayment.png"),
+  repayment_jitter,
+  width = 1920, height = 1080, units = "px", bg = "white")
+
+ggsave(
+  here("out", "explore", "jitter-indexation.png"),
+  indexation_jitter,
+  width = 1920, height = 1080, units = "px", bg = "white")
+
+ggsave(
+  here("out", "explore", "jitter-payback.png"),
+  payback_jitter,
+  width = 1920, height = 1080, units = "px", bg = "white")
 ```
 
-Lots of stuff to digest here. I'm curious why the behaviour of those with growing debts is very different in 2021 to in other years.
+Lots of stuff to digest here. Payback period is an interesting measure but maybe not great to do stats on.
 
 Let's look at this two dimensionally instead:
 
@@ -488,20 +595,130 @@ ggplot(finite_paybacks) +
 
 This might be easier to digest if we bin net deduction and payback period up. We can put people into categories:
 
-- No debt we'll remove altogether
+- No debt (we'll calculate proportions with this both present and absent, as most people don't have debts)
 - Debt went backwards (no repayment due to low income)
 - Debt went backwards despite repayment (we could bin this up further)
 - Debt basically went nowhere (indexation and repayment pretty balanced)
 - Debt started going down (repayment exceeded indexation)
 
+I'll also calculate margins of error here so we can put some rough confidence intervals on these proportions (the data look like they satisfy assumptions of normality in the above charts, at least for net reduction in debt).
+
 ```{r}
 #| label: binning
 unnested_payback |>
-  filter(help_debt > 0) |>
   mutate(
     help_category = case_when(
-      repay_amount == 0 ~ "no_repayment",
-      net_reduction < -200
-    )
-  )
+      help_debt < 1                    ~ "No debt",
+      repay_amount < 1                 ~ "No repayment",
+      net_reduction < -200              ~ "Debt grew despite payment",
+      between(net_reduction, -200, 200) ~ "Indexation and repayment balanced",
+      net_reduction > 200               ~ "Debt reduced"),
+    calc_type = case_when(
+      str_ends(year_end, fixed("+")) ~ "Projected with new policy",
+      str_ends(year_end, fixed("*")) ~ "Projected from 2020-21 returns",
+      TRUE ~ "From tax return sample")) ->
+unnested_categories
+
+# summarise first with no debts included...
+unnested_categories |>
+  group_by(year_end, calc_type, help_category) |>
+  summarise(n = n()) |>
+  mutate(
+    p = n / sum(n, na.rm = TRUE),
+    se = 1.9599 * sqrt(p * (1 - p) / n),
+    p_upper = p + se,
+    p_lower = p - se) |>
+  write_csv(here("data", "stats-alltaxpayers.csv")) ->
+props_alltaxpayers
+
+# ... then with no debts removed
+unnested_categories |>
+  filter(help_category != "No debt") |>
+  group_by(year_end, calc_type, help_category) |>
+  summarise(n = n()) |>
+  mutate(
+    p = n / sum(n, na.rm = TRUE),
+    se = 1.9599 * sqrt(p * (1 - p) / n),
+    p_upper = p + se,
+    p_lower = p - se) |>
+  write_csv(here("data", "stats-alldebtors.csv")) ->
+props_alldebtors
 ```
+
+Let's see those proportions visualised:
+
+```{r}
+#| label: vis-stats-all-debtors
+props_alldebtors |>
+  mutate(year_int = as.integer(str_sub(year_end, 1, 4))) |>
+  ungroup() |>
+  ggplot() +
+    aes(x = year_int, y = p, colour = help_category) +
+    geom_point() +
+    geom_line(aes(linetype = calc_type)) +
+    scale_y_continuous(labels = scales::label_percent()) +
+    scale_linetype_manual(
+      values = c(
+        "Projected with new policy" = "dotted",
+        "Projected from 2020-21 returns" = "dashed",
+        "From tax return sample" = "solid"),
+      guide = guide_legend(nrow = 3, byrow = TRUE)) +
+    scale_x_continuous(breaks = 2011:2024) +
+    scale_colour_manual(
+      values = c(
+        "Debt grew despite payment" = "firebrick",
+        "Debt reduced" = "green",
+        "No repayment" = "grey",
+        "Indexation and repayment balanced" = "gold"),
+      guide = guide_legend(nrow = 3, byrow = TRUE)) +
+    theme_minimal(base_size = 8) +
+    theme(
+      legend.position = "top",
+      legend.direction = "horizontal") +
+    labs(
+      x = NULL, y = NULL,
+      colour = NULL, linetype = NULL,
+      title = "Repayment status of HELP loans") ->
+stats_alldebtors_plot
+
+ggsave(
+  here("out", "explore", "stats-alldebtors.png"),
+  stats_alldebtors_plot,
+  width = 1920, height = 1080, units = "px", bg = "white")
+```
+
+I want to zoom in for exploration on the people whose debt went backwards. It looks like this is a new phenomenon, emerging in 2019 but now quite a big problem.
+
+Let's repeat our earlier heatmaps with our new categories to see their income, HELP characteristics:
+
+
+```{r}
+#| label: points-payback
+ggplot(unnested_categories) +
+  aes(x = income, y = help_debt) +
+  geom_point(aes(colour = help_category), alpha = 0.1, size = 0.5) +
+  facet_wrap(vars(year_end)) +
+  scale_x_continuous(trans = "log10", labels = scales::label_currency(),
+    limits = c(10000, 1000000)) +
+  scale_y_continuous(trans = "log10", labels = scales::label_currency(),
+    limits = c(500, 500000)) +
+  scale_colour_manual(
+    values = c(
+      "Debt grew despite payment" = "firebrick",
+      "Debt reduced" = "green",
+      "No repayment" = "grey",
+      "Indexation and repayment balanced" = "gold")) +
+  theme_dark(base_size = 8) +
+  labs(
+    x = "Taxable income",
+    y = "HELP debt balance",
+    colour = "Net reduction in debt",
+    title = "Distribution of HELP balances") ->
+heatmap_paybacks
+
+ggsave(
+  here("out", "explore", "income-debt-category-points.png"),
+  heatmap_paybacks,
+  width = 1920, height = 1080, units = "px", bg = "white")
+```
+
