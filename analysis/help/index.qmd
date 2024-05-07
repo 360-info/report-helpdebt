@@ -944,7 +944,7 @@ props_alldebtors_scaled |>
 stats_alldebtors_plot_scaled
 
 save_360plot(stats_alldebtors_plot_scaled,
-  here("out", "explore", "stats-alldebtors-scaled-final.png"))
+  here("out", "stats-alldebtors-scaled-final.png"))
 ```
 
 ### Wide for Datawrapper/Flourish
@@ -1067,6 +1067,6 @@ ggplot(synthetic_categories) +
 synthetic_heatmap
 
 save_360plot(synthetic_heatmap,
-  here("out", "explore", "synth-heatmap.png"), shape = "sdtv-landscape")
+  here("out", "synth-heatmap.png"), shape = "sdtv-landscape")
 ```
 

@@ -15,10 +15,6 @@ Thumbs.db
 # quarto
 /.quarto/
 
-# output folder (you may want to exclude files when we publish!)
-/out/*
-!/out
-
 # no raw data (this cannot be shared!)
 /data/raw
 
