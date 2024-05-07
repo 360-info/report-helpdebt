@@ -1,14 +1,13 @@
 ---
 format: gfm
 360readme:
-  title: Title here
-  summary: One line summary here
-  repo: report-example
-  share-url: https://example.360visuals.org/example
+  title: HELP debts
+  summary: Visualises the impact of changing repayment rates and indexation on Australian student debt
+  repo: report-helpdebt
+  share-url: blob/main/out/synth-heatmap.png
   data-sources: |
     <ul>
-      <li><a href="https://example.com">Example 1</a></li>
-      <li><a href="https://example.com">Example 2</a></li>
+      <li><a href="https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/taxation-statistics/taxation-statistics-previous-editions/taxation-statistics-2016-17/statistics/individuals/individuals-sample-files">Australian Taxation Office</a></li>
     </ul>
 ---
 
@@ -30,6 +29,10 @@ Data in these charts comes from:
 {{< meta 360readme.data-sources >}}
 
 **Please attribute 360info and the data sources when you use and remix these visualisations.**
+
+:::{.callout-warning}
+Please note that the source data for this analysis is not included with this repository. It is available from the ATO at the above link on request and upon submission of a confidentiality deed.
+:::
 
 ## 💻 Reproduce the analysis
 

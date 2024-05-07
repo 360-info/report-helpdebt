@@ -14,6 +14,7 @@ code-fold: true
 #| label: setup
 library(tidyverse)
 library(RColorBrewer)
+library(ggalt)
 library(here)
 dir.create(here("out", "explore"), showWarnings = FALSE, recursive = TRUE)
 ```
@@ -193,7 +194,7 @@ Let's tidy up the repayment rate tables. Note that the top rate for each year is
 
 ```{r}
 #| label: get-repayment-rates
-here("data", "repayment-rates-2004-2019.csv") |>
+here("data", "raw", "repayment-rates-2004-2019.csv") |>
   read_csv(col_types = "ccc") |>
   pivot_longer(-Year, names_to = "rate", values_to = "threshold") |>
   mutate(
@@ -208,7 +209,7 @@ here("data", "repayment-rates-2004-2019.csv") |>
   filter(!is.na(threshold)) ->
 repayment_rates_oldest
 
-here("data", "repayment-rates-2019-2021.csv") |>
+here("data", "raw", "repayment-rates-2019-2021.csv") |>
   read_csv(col_types = "ccc") |>
   pivot_longer(-Rate, names_to = "Year", values_to = "threshold") |>
   mutate(
@@ -248,7 +249,7 @@ tidy_ratetables <- function(path, suffix = c("*", "+")) {
 }
 
 tibble(
-  path = list.files(here("data"),
+  path = list.files(here("data", "raw"),
     pattern = glob2rx("repayment-rates-FY20??.csv"),
     full.names = TRUE)) ->
 rate_table_files_newest
@@ -275,7 +276,8 @@ repayment_rates_oldest |>
   rename(repay_rate = rate, repay_threshold = threshold) |>
   group_by(year_end) |>
   mutate(repay_threshold =
-    if_else(repay_rate == max(repay_rate, na.rm = TRUE), Inf, repay_threshold)) ->
+    if_else(repay_rate == max(repay_rate, na.rm = TRUE), Inf, repay_threshold)) |>
+  write_csv(here("data", "repayment-rates.csv"))->
 repayment_rates
 ```
 
@@ -945,6 +947,8 @@ stats_alldebtors_plot_scaled
 
 save_360plot(stats_alldebtors_plot_scaled,
   here("out", "stats-alldebtors-scaled-final.png"))
+save_360plot(stats_alldebtors_plot_scaled,
+  here("out", "stats-alldebtors-scaled-final.svg"))
 ```
 
 ### Wide for Datawrapper/Flourish
@@ -972,32 +976,24 @@ I'd like to make a heatmap that really shows where these categories lie. Instead
 ```{r}
 #| label: synthetic-data
 expand_grid(
-  year_end = c("2023*", "2023+"),
+  year_end = "2018",
   income = seq(0, 150000, by = 1000),
   help_debt = seq(0, 100000, by = 500)) ->
 synthetic
 
 # get the repayment rates under both scenarios for just 2024
 
-repayment_rates_new |>
-  filter(year_end == "2023*") |>
+repayment_rates_oldest |>
+  filter(year_end == "2018") |>
   mutate(repay_threshold =
     if_else(rate == max(rate, na.rm = TRUE), Inf, threshold)) |>
   select(year_end, repay_rate = rate, repay_threshold) ->
 latest_repayment_rates_nopolicy
 
-repayment_rates_new_alppolicy |>
-  filter(year_end == "2023+") |>
-  mutate(repay_threshold =
-    if_else(rate == max(rate, na.rm = TRUE), Inf, threshold)) |>
-  select(year_end, repay_rate = rate, repay_threshold) ->
-latest_repayment_rates_alppolicy
-
-latest_repayment_rates <-
-  bind_rows(latest_repayment_rates_nopolicy, latest_repayment_rates_alppolicy)
+latest_repayment_rates <- latest_repayment_rates_nopolicy
 
 indexation_rates |>
-  filter(str_detect(year_end, "2023")) ->
+  filter(str_detect(year_end, "2018")) ->
 latest_indexation_rates
 
 # now join them all
@@ -1019,10 +1015,7 @@ synthetic |>
       repay_amount < 1                 ~ "No repayment (low income)",
       net_reduction < -200              ~ "Debt grew despite payment",
       between(net_reduction, -200, 200) ~ "Indexation and repayment balanced",
-      net_reduction > 200               ~ "Debt reduced"),
-    scenario = case_match(year_end,
-      "2023*" ~ "Before 2024 pre-budget policy: 7.1% indexation",
-      "2023+" ~ "With 2024 pre-budget policy: 3.2% indexation")) ->
+      net_reduction > 200               ~ "Debt reduced")) ->
 synthetic_categories
 
 # visualise
@@ -1030,7 +1023,7 @@ synthetic_categories
 ggplot(synthetic_categories) +
   aes(x = income, y = help_debt) +
   geom_raster(aes(fill = help_category)) +
-  facet_wrap(vars(scenario)) +
+  # facet_wrap(vars(scenario)) +
   scale_fill_manual(
     values = c(
       "Debt grew despite payment" = "#c7321c",
@@ -1058,8 +1051,9 @@ ggplot(synthetic_categories) +
     x = "Income",
     y = "HELP loan balance",
     fill = NULL,
-    title = "HELP loans going backwards in 2023",
-    subtitle = "Debts that \"go backwards\" to remain last year for some people earning $50,000–70,000 despite new policy",
+    title = "HELP loans didn't go backwards before 2020",
+    subtitle = "Before 2020, the combination of repayment rates and indexation levels ensured that if you were making mandatory payments, your balance never rose.",
+    # subtitle = "Debts that \"go backwards\" to remain last year for some people earning $50,000–70,000 despite new policy",
     caption = paste(
       "**CHART:** James Goldie, 360info",
       "**DATA:** Australian Taxation Office",
@@ -1067,6 +1061,96 @@ ggplot(synthetic_categories) +
 synthetic_heatmap
 
 save_360plot(synthetic_heatmap,
-  here("out", "synth-heatmap.png"), shape = "sdtv-landscape")
+  here("out", "synth-heatmap-2018.png"), shape = "sdtv-landscape")
 ```
 
+### Repayment rates over time
+
+Although indexation is a big part of this, the changing repayment rates are also a big component. Let's visualise those too.
+
+
+```{r}
+repayment_rates |>
+  filter(!str_detect(year_end, fixed("+"))) |>
+  rename(threshold_upper = repay_threshold) |>
+  arrange(year_end, repay_rate) |>
+  group_by(year_end) |>
+  mutate(
+    year_end = as.integer(str_remove(year_end, fixed("*"))),
+    threshold_lower = lag(threshold_upper, 1)) |>
+  replace_na(list(threshold_lower = 0)) ->
+repayment_ranges
+
+pal_YlGnBu <- brewer.pal(7, "YlGnBu") |> colorRampPalette()
+year_count <- repayment_ranges |> pull(repay_rate) |> unique() |> length() 
+repay_rate_pal <- pal_YlGnBu(year_count)
+
+repayment_ranges |>
+  ungroup() |>
+  mutate(
+    repay_rate_fct = factor(repay_rate,
+      levels = seq(0, 0.1, by = 0.005),
+      labels = seq(0, 0.1, by = 0.005) |> scales::percent()),
+    repay_rate_fct = fct_drop(repay_rate_fct),
+    threshold_upper =
+      if_else(is.infinite(threshold_upper), 200000, threshold_upper)
+  ) |>
+  ggplot() +
+    aes(x = year_end, fill = repay_rate_fct) +
+    geom_ribbon(aes(ymin = threshold_lower, ymax = threshold_upper),
+      colour = "#00000044",
+      stat = "stepribbon") +
+    scale_fill_manual(values = c("white", repay_rate_pal)) +
+    scale_x_continuous(expand = expansion()) +
+    scale_y_continuous(expand = expansion(), labels = scales::label_currency()) +
+    coord_cartesian(ylim = c(NA, 160000)) +
+    annotate_360_glasslight(
+      x = 2006.5, y = 20000, hjust = 0,
+      label = paste(
+        "Until 2019, HELP loan repayments",
+        "**started at 4%.** This meant anyone",
+        "repaying a debt would see their",
+        "balance go down.",
+        sep = "<br>"
+      ),
+      size = 3
+    ) +
+    annotate_360_glasslight(
+      x = 2023.5, y = 25000, hjust = 1,
+      label = paste(
+        "The **lower rates** introduced since",
+        "then have meant people making small",
+        "payments end up going backwards,",
+        "as indexation overtakes their repayment.",
+        sep = "<br>"
+      ),
+      size = 3
+    ) +
+    theme_360(base_size = 14) +
+    theme(
+      panel.ontop = TRUE,
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.major.y = element_line(colour = "#00000022"),
+      panel.grid.minor.y = element_blank(),
+    ) +
+    labs(
+      x = NULL, y = "HELP loan balance",
+      fill = "Repayment rate",
+      title = "HELP loan repayment rates",
+      subtitle = paste(
+        "The introduction of lower repayment rates in recent years has produced a new class of people",
+        "whose **debt repayments are overshadowed by indexation**",
+        sep = "<br>"),
+      caption = paste(
+        "**CHART:** James Goldie, 360info",
+        "**DATA:** Australian Parliament House, Australian Taxation Office",
+        sep = "<br>")) ->
+repayment_rates_plot
+
+save_360plot(repayment_rates_plot,
+  here("out", "repayment-rates.png"), shape = "sdtv-landscape")
+save_360plot(repayment_rates_plot,
+  here("out", "repayment-rates.svg"), shape = "sdtv-landscape")
+
+```

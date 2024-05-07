@@ -16,7 +16,8 @@ Thumbs.db
 /.quarto/
 
 # no raw data (this cannot be shared!)
-/data/raw
+/data/raw/*
+!/data/raw/repayment-*.csv
 
 # no exploratory plots that may expose individuals
 /out/explore
