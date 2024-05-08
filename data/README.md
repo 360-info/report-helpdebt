@@ -30,7 +30,8 @@ Raw repayment rate tables copied directly from the [APH](https://www.aph.gov.au/
 
 ## Individual tax return data
 
-> ![warning]
+> [!WARNING]
+> 
 > This data is not included in the repository to protect the privacy of individuals. The data is available from the Australian Taxation Office, and can be requested by [contacting them](https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/taxation-statistics/taxation-statistics-previous-editions/taxation-statistics-2017-18/statistics/individuals/individuals-sample-files) and signing a confidentiality deed.
 
 If you acquire this data, the analysis script looks for `.csv` or `.txt` files inside `/data/raw` matching the pattern `20??_sample_file`.
