@@ -4,7 +4,6 @@ format: gfm
   title: HELP debts
   summary: Visualises the impact of changing repayment rates and indexation on Australian student debt
   repo: report-helpdebt
-  share-url: out/synth-heatmap.png
   data-sources: |
     <ul>
       <li><a href="https://www.ato.gov.au/about-ato/research-and-statistics/in-detail/taxation-statistics/taxation-statistics-previous-editions/taxation-statistics-2016-17/statistics/individuals/individuals-sample-files">Australian Taxation Office</a></li>
@@ -12,7 +11,7 @@ format: gfm
 ---
 
 # {{< meta 360readme.title >}}
-### [📋&nbsp;Add&nbsp;graphic&nbsp;to&nbsp;your&nbsp;story]({{< meta 360readme.share-url >}}?edshare) • [📊&nbsp;Get&nbsp;the&nbsp;data](data) • [💻&nbsp;Reproduce&nbsp;the&nbsp;analysis](#-reproduce-the-analysis)
+### [📋&nbsp;Graphic&nbsp;1](out/stats-alldebtors-scaled-final.png) • [📋&nbsp;Graphic&nbsp;2](out/synth-heatmap.png) •[📋&nbsp;Graphic&nbsp;3](out/repayment-rates.png) • [📊&nbsp;Get&nbsp;the&nbsp;data](data) • [💻&nbsp;Reproduce&nbsp;the&nbsp;analysis](#-reproduce-the-analysis)
 
 {{< meta 360readme.summary >}}
 
