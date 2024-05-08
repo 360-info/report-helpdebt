@@ -976,24 +976,32 @@ I'd like to make a heatmap that really shows where these categories lie. Instead
 ```{r}
 #| label: synthetic-data
 expand_grid(
-  year_end = "2018",
+  year_end = c("2023*", "2023+"),
   income = seq(0, 150000, by = 1000),
   help_debt = seq(0, 100000, by = 500)) ->
 synthetic
 
 # get the repayment rates under both scenarios for just 2024
 
-repayment_rates_oldest |>
-  filter(year_end == "2018") |>
+repayment_rates_new |>
+  filter(year_end == "2023*") |>
   mutate(repay_threshold =
     if_else(rate == max(rate, na.rm = TRUE), Inf, threshold)) |>
   select(year_end, repay_rate = rate, repay_threshold) ->
 latest_repayment_rates_nopolicy
 
-latest_repayment_rates <- latest_repayment_rates_nopolicy
+repayment_rates_new_alppolicy |>
+  filter(year_end == "2023+") |>
+  mutate(repay_threshold =
+    if_else(rate == max(rate, na.rm = TRUE), Inf, threshold)) |>
+  select(year_end, repay_rate = rate, repay_threshold) ->
+latest_repayment_rates_alppolicy
+
+latest_repayment_rates <-
+  bind_rows(latest_repayment_rates_nopolicy, latest_repayment_rates_alppolicy)
 
 indexation_rates |>
-  filter(str_detect(year_end, "2018")) ->
+  filter(str_detect(year_end, "2023")) ->
 latest_indexation_rates
 
 # now join them all
@@ -1015,7 +1023,10 @@ synthetic |>
       repay_amount < 1                 ~ "No repayment (low income)",
       net_reduction < -200              ~ "Debt grew despite payment",
       between(net_reduction, -200, 200) ~ "Indexation and repayment balanced",
-      net_reduction > 200               ~ "Debt reduced")) ->
+      net_reduction > 200               ~ "Debt reduced"),
+    scenario = case_match(year_end,
+      "2023*" ~ "Before 2024 pre-budget policy: 7.1% indexation",
+      "2023+" ~ "With 2024 pre-budget policy: 3.2% indexation")) ->
 synthetic_categories
 
 # visualise
@@ -1023,7 +1034,7 @@ synthetic_categories
 ggplot(synthetic_categories) +
   aes(x = income, y = help_debt) +
   geom_raster(aes(fill = help_category)) +
-  # facet_wrap(vars(scenario)) +
+  facet_wrap(vars(scenario)) +
   scale_fill_manual(
     values = c(
       "Debt grew despite payment" = "#c7321c",
@@ -1052,8 +1063,8 @@ ggplot(synthetic_categories) +
     y = "HELP loan balance",
     fill = NULL,
     title = "HELP loans didn't go backwards before 2020",
-    subtitle = "Before 2020, the combination of repayment rates and indexation levels ensured that if you were making mandatory payments, your balance never rose.",
-    # subtitle = "Debts that \"go backwards\" to remain last year for some people earning $50,000–70,000 despite new policy",
+    # subtitle = "Before 2020, the combination of repayment rates and indexation levels ensured that if you were making mandatory payments, your balance never rose.",
+    subtitle = "Debts that \"go backwards\" to remain last year for some people earning $50,000–70,000 despite new policy",
     caption = paste(
       "**CHART:** James Goldie, 360info",
       "**DATA:** Australian Taxation Office",
@@ -1061,7 +1072,9 @@ ggplot(synthetic_categories) +
 synthetic_heatmap
 
 save_360plot(synthetic_heatmap,
-  here("out", "synth-heatmap-2018.png"), shape = "sdtv-landscape")
+  here("out", "synth-heatmap-2023.png"), shape = "sdtv-landscape")
+save_360plot(synthetic_heatmap,
+  here("out", "synth-heatmap-2023.svg"), shape = "sdtv-landscape")
 ```
 
 ### Repayment rates over time
