@@ -2,7 +2,7 @@
 
 # HELP debts
 
-### [📋 Add graphic to your story](blob/main/out/synth-heatmap.png?edshare) • [📊 Get the data](data) • [💻 Reproduce the analysis](#-reproduce-the-analysis)
+### [📋 Add graphic to your story](out/synth-heatmap.png?edshare) • [📊 Get the data](data) • [💻 Reproduce the analysis](#-reproduce-the-analysis)
 
 Visualises the impact of changing repayment rates and indexation on
 Australian student debt
