@@ -1148,7 +1148,7 @@ repayment_ranges |>
       panel.grid.minor.y = element_blank(),
     ) +
     labs(
-      x = NULL, y = "HELP loan balance",
+      x = NULL, y = "Taxable income",
       fill = "Repayment rate",
       title = "HELP loan repayment rates",
       subtitle = paste(
